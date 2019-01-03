@@ -1,0 +1,15 @@
+[package]
+name = "wx_storage"
+version = "0.1.0"
+authors = ["Rob Hurkes <rhurkes@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "wx_storage"
+
+[dependencies]
+bincode = "1.0"
+rocksdb = "0.11"
+slog = "2.4"
+wx = { git = "https://github.com/rhurkes/wx_shared" }
+zmq = "0.9"
