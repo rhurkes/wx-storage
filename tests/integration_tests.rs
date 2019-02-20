@@ -1,20 +1,45 @@
-extern crate wx_storage;
+extern crate wx_store;
 
 use bincode::{deserialize, serialize};
-use rocksdb::{DB, Options};
+use rocksdb::{Options, DB};
 use std::{str, thread, time};
-use wx::EventMessage;
-use wx_storage::Store;
+use wx::domain::{Event, EventType};
+use wx_store::Store;
 use zmq::Message;
 
-const THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60;    // 1 hr
+const THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60; // 1 hr
 const TEST_STORE_PATH: &str = "wx_test";
+
+fn destroy_store() {
+    let opts = Options::default();
+    DB::destroy(&opts, TEST_STORE_PATH).unwrap();
+}
+
+fn get_test_event() -> Event {
+    Event {
+        event_ts: 1548378900711570,
+        event_type: EventType::NwsLsr,
+        ingest_ts: 0,
+        valid_ts: None,
+        expires_ts: None,
+        location: None,
+        image_uri: None,
+        report: None,
+        warning: None,
+        watch: None,
+        outlook: None,
+        md: None,
+        title: String::from("title"),
+        summary: String::from("summary"),
+        text: None,
+    }
+}
 
 #[test]
 fn zero_message_length_should_error() {
     let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
     let msg = Message::new();
-    let result = wx_storage::process_msg(&msg, &store);
+    let result = wx_store::process_msg(&msg, &store);
     assert!(result.is_err())
 }
 
@@ -23,7 +48,7 @@ fn unknown_command_should_error() {
     let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
     let payload = b"4";
     let msg = Message::from_slice(payload);
-    let result = wx_storage::process_msg(&msg, &store);
+    let result = wx_store::process_msg(&msg, &store);
     assert!(result.is_err())
 }
 
@@ -31,7 +56,7 @@ fn unknown_command_should_error() {
 fn put_and_get_should_work() {
     destroy_store();
     let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
-    
+
     // put
     let key = "test";
     let value = "testval".as_bytes();
@@ -39,14 +64,14 @@ fn put_and_get_should_work() {
     let mut payload = [0u8].to_vec();
     payload.extend_from_slice(&kv);
     let msg = Message::from_slice(&payload);
-    let result = wx_storage::process_msg(&msg, &store);
+    let result = wx_store::process_msg(&msg, &store);
     assert!(result.is_ok());
 
     // get
     let mut payload = [1u8].to_vec();
     payload.extend_from_slice(key.as_bytes());
     let msg = Message::from_slice(&payload);
-    let result = wx_storage::process_msg(&msg, &store);
+    let result = wx_store::process_msg(&msg, &store);
     assert!(result.is_ok());
     assert!(result.unwrap() == value);
 }
@@ -59,7 +84,7 @@ fn get_should_return_nothing_if_key_not_found() {
     let mut payload = [1u8].to_vec();
     payload.extend_from_slice(key.as_bytes());
     let msg = Message::from_slice(&payload);
-    let result = wx_storage::process_msg(&msg, &store);
+    let result = wx_store::process_msg(&msg, &store);
     let expected: Vec<u8> = vec![];
     assert!(result.unwrap() == expected);
 }
@@ -68,19 +93,35 @@ fn get_should_return_nothing_if_key_not_found() {
 fn put_event_should_return_a_u64() {
     destroy_store();
     let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let event = get_test_event();
+    let mut payload = [2u8].to_vec();
+    payload.extend_from_slice(&serialize(&event).unwrap());
+    let msg = Message::from_slice(&payload);
+    let result = wx_store::process_msg(&msg, &store);
+    assert!(result.unwrap().len() == 8)
+}
 
-    let event = EventMessage {
-        ingest_ts: 0,
-        event_ts: 1548378900711570,
-        event_type: "a",
-        data: "b".to_string(),
-    };
+#[test]
+fn put_event_and_get_events_should_persist_an_event_and_populate_ingest_ts() {
+    destroy_store();
+    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let event = get_test_event();
 
     let mut payload = [2u8].to_vec();
     payload.extend_from_slice(&serialize(&event).unwrap());
     let msg = Message::from_slice(&payload);
-    let result = wx_storage::process_msg(&msg, &store);
-    assert!(result.unwrap().len() == 8)
+    let key = wx_store::process_msg(&msg, &store).unwrap();
+    let expected_key: u64 = deserialize(&key).unwrap();
+
+    let payload = [3u8].to_vec();
+    let msg = Message::from_slice(&payload);
+    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result: Vec<Event> = deserialize(&result).unwrap();
+    let result = &result[0];
+    assert_eq!(result.event_ts, event.event_ts);
+    assert_eq!(result.expires_ts, event.expires_ts);
+    assert_eq!(result.ingest_ts, expected_key);
+    assert_eq!(result.event_type, event.event_type);
 }
 
 #[test]
@@ -90,29 +131,24 @@ fn get_event_should_return_events_newer_than_threshold() {
     let sleep_duration = time::Duration::from_secs(1);
     let store = Store::new(TEST_STORE_PATH, short_threshold_micros);
 
-    let event = EventMessage {
-        ingest_ts: 0,
-        event_ts: 1548378900711570,
-        event_type: "abc",
-        data: "this is a fake bulletin".to_string(),
-    };
+    let event = get_test_event();
 
     let mut payload = [2u8].to_vec();
     payload.extend_from_slice(&serialize(&event).unwrap());
     let msg = Message::from_slice(&payload);
 
     // put 1 "old" message and sleep
-    wx_storage::process_msg(&msg, &store).unwrap();
+    wx_store::process_msg(&msg, &store).unwrap();
     thread::sleep(sleep_duration);
 
     // put 1 "new" messages and capture the ingest_ts
-    let value = wx_storage::process_msg(&msg, &store).unwrap();
+    let value = wx_store::process_msg(&msg, &store).unwrap();
     let expected: u64 = deserialize(&value).unwrap();
 
     let payload = [3u8].to_vec();
     let msg = Message::from_slice(&payload);
-    let result = wx_storage::process_msg(&msg, &store).unwrap();
-    let result: Vec<EventMessage> = deserialize(&result).unwrap();
+    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result: Vec<Event> = deserialize(&result).unwrap();
     assert!(result.len() == 1);
     assert!(result[0].ingest_ts == expected);
 }
@@ -121,40 +157,43 @@ fn get_event_should_return_events_newer_than_threshold() {
 fn get_events_should_seek_correctly() {
     destroy_store();
     let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
-
-    let event = EventMessage {
-        ingest_ts: 0,
-        event_ts: 1548378900711570,
-        event_type: "abc",
-        data: "this is a fake bulletin".to_string(),
-    };
+    let event = get_test_event();
 
     let mut payload = [2u8].to_vec();
     payload.extend_from_slice(&serialize(&event).unwrap());
     let msg = Message::from_slice(&payload);
 
     // put 1 "old" message
-    wx_storage::process_msg(&msg, &store).unwrap();
+    wx_store::process_msg(&msg, &store).unwrap();
 
     // put 1 message and capture the ingest_ts
-    let value = wx_storage::process_msg(&msg, &store).unwrap();
+    let value: u64 = deserialize(&wx_store::process_msg(&msg, &store).unwrap()).unwrap();
 
     // put 1 "new" message
-    let expected = wx_storage::process_msg(&msg, &store).unwrap();
+    let expected = wx_store::process_msg(&msg, &store).unwrap();
     let expected: u64 = deserialize(&expected).unwrap();
 
     // get events, passing the last seen ts
     let mut payload = [3u8].to_vec();
-    payload.extend_from_slice(&value);
+    let ingest_string_bytes = serialize(&value.to_string()).unwrap();
+    payload.extend_from_slice(&ingest_string_bytes);
 
     let msg = Message::from_slice(&payload);
-    let result = wx_storage::process_msg(&msg, &store).unwrap();
-    let result: Vec<EventMessage> = deserialize(&result).unwrap();
+    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result: Vec<Event> = deserialize(&result).unwrap();
     assert!(result.len() == 1);
     assert!(result[0].ingest_ts == expected);
 }
 
-fn destroy_store() {
-    let opts = Options::default();
-    DB::destroy(&opts, TEST_STORE_PATH).unwrap();
+#[test]
+fn get_events_handles_zero_events() {
+    destroy_store();
+    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let mut payload = [3u8].to_vec();
+    let value: Vec<u8> = vec![];
+    payload.extend_from_slice(&value);
+    let msg = Message::from_slice(&payload);
+    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result: Vec<Event> = deserialize(&result).unwrap();
+    assert!(result.len() == 0);
 }

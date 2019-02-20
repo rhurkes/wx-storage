@@ -1,11 +1,11 @@
 [package]
-name = "wx_storage"
+name = "wx_store"
 version = "0.1.0"
 authors = ["Rob Hurkes <rhurkes@gmail.com>"]
 edition = "2018"
 
 [lib]
-name = "wx_storage"
+name = "wx_store"
 
 [dependencies]
 bincode = "1.0"

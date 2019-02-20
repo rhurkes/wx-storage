@@ -1,4 +1,4 @@
-# wx_storage
+# wx_store
 Small process to centralize reading/writing events to a [RocksDB](https://github.com/facebook/rocksdb)-based store in a way that is tailored to the wx_api domain. There are two types of data stored:
 
 ## Events
@@ -11,7 +11,7 @@ Stored in the **default** column family.
 Communication with the storage engine is handled using [ZeroMQ](http://zeromq.org/), which provides a performant and ergonomic way of doing IPC/RPC and also a means of concurrency.
 
 # Usage
-- Command to build for production: `cargo build --release && strip target/release/wx_storage`
+- Command to build for production: `cargo build --release && strip target/release/wx_store`
 
 Command payloads sent via ZeroMQ are an array of bytes, with the first byte as the **command type** and the rest of the bytes being a type-specific payload.
 
@@ -48,9 +48,11 @@ Iterating across 10k keys in RocksDB, serializing, and sending via IPC:
 All functionality is fairly low level, so instead of opting to mock, coverage is provided by integration tests.
 
  # TODO
+ - Add ability to put/get running tail of upstream metrics (errors, heartbeat, etc.)
  - Add ability to put/get statuses with expiration
  - Add cleanup function
  - Add idiomatic benchmark tests
- - Look into replacing stringified u64 with Big Endian u64 bytes for event keys
+ - Look into custom sort for u64 bytes instead of converting to string
+ - Add enum for command bytes and return byte types
  - Implement [zero copy](http://zeromq.org/blog:zero-copy) when/if [issue #139](https://github.com/erickt/rust-zmq/issues/139) is resolved
  
