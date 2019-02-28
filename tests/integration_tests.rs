@@ -3,11 +3,12 @@ extern crate wx_store;
 use bincode::{deserialize, serialize};
 use rocksdb::{Options, DB};
 use std::{str, thread, time};
-use wx::domain::{Event, EventType};
+use wx::domain::{Event, EventType, FetchFailure, WxApp};
 use wx_store::Store;
 use zmq::Message;
 
-const THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60; // 1 hr
+const EVENT_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60; // 1 hr
+const FETCH_FAILURE_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 3;   // 3 minutes
 const TEST_STORE_PATH: &str = "wx_test";
 
 fn destroy_store() {
@@ -19,25 +20,26 @@ fn get_test_event() -> Event {
     Event {
         event_ts: 1548378900711570,
         event_type: EventType::NwsLsr,
-        ingest_ts: 0,
-        valid_ts: None,
         expires_ts: None,
-        location: None,
+        fetch_status: None,
         image_uri: None,
-        report: None,
-        warning: None,
-        watch: None,
-        outlook: None,
+        ingest_ts: 0,
+        location: None,
         md: None,
-        title: String::from("title"),
+        outlook: None,
+        report: None,
         summary: String::from("summary"),
         text: None,
+        title: String::from("title"),
+        valid_ts: None,
+        warning: None,
+        watch: None,
     }
 }
 
 #[test]
 fn zero_message_length_should_error() {
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let msg = Message::new();
     let result = wx_store::process_msg(&msg, &store);
     assert!(result.is_err())
@@ -45,7 +47,7 @@ fn zero_message_length_should_error() {
 
 #[test]
 fn unknown_command_should_error() {
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let payload = b"4";
     let msg = Message::from_slice(payload);
     let result = wx_store::process_msg(&msg, &store);
@@ -55,7 +57,7 @@ fn unknown_command_should_error() {
 #[test]
 fn put_and_get_should_work() {
     destroy_store();
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
 
     // put
     let key = "test";
@@ -79,7 +81,7 @@ fn put_and_get_should_work() {
 #[test]
 fn get_should_return_nothing_if_key_not_found() {
     destroy_store();
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let key = "i-do-not-exist";
     let mut payload = [1u8].to_vec();
     payload.extend_from_slice(key.as_bytes());
@@ -92,7 +94,7 @@ fn get_should_return_nothing_if_key_not_found() {
 #[test]
 fn put_event_should_return_a_u64() {
     destroy_store();
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let event = get_test_event();
     let mut payload = [2u8].to_vec();
     payload.extend_from_slice(&serialize(&event).unwrap());
@@ -104,7 +106,7 @@ fn put_event_should_return_a_u64() {
 #[test]
 fn put_event_and_get_events_should_persist_an_event_and_populate_ingest_ts() {
     destroy_store();
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let event = get_test_event();
 
     let mut payload = [2u8].to_vec();
@@ -127,9 +129,9 @@ fn put_event_and_get_events_should_persist_an_event_and_populate_ingest_ts() {
 #[test]
 fn get_event_should_return_events_newer_than_threshold() {
     destroy_store();
-    let short_threshold_micros = 1000 * 1000; // 1s
+    let event_threshold_micros = 1000 * 1000; // 1s
     let sleep_duration = time::Duration::from_secs(1);
-    let store = Store::new(TEST_STORE_PATH, short_threshold_micros);
+    let store = Store::new(TEST_STORE_PATH, event_threshold_micros, FETCH_FAILURE_THRESHOLD_MICROS);
 
     let event = get_test_event();
 
@@ -156,7 +158,7 @@ fn get_event_should_return_events_newer_than_threshold() {
 #[test]
 fn get_events_should_seek_correctly() {
     destroy_store();
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let event = get_test_event();
 
     let mut payload = [2u8].to_vec();
@@ -188,7 +190,7 @@ fn get_events_should_seek_correctly() {
 #[test]
 fn get_events_handles_zero_events() {
     destroy_store();
-    let store = Store::new(TEST_STORE_PATH, THRESHOLD_MICROS);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
     let mut payload = [3u8].to_vec();
     let value: Vec<u8> = vec![];
     payload.extend_from_slice(&value);
@@ -196,4 +198,59 @@ fn get_events_handles_zero_events() {
     let result = wx_store::process_msg(&msg, &store).unwrap();
     let result: Vec<Event> = deserialize(&result).unwrap();
     assert!(result.len() == 0);
+}
+
+#[test]
+fn put_fetch_failure_should_persist_failures() {
+    destroy_store();
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, FETCH_FAILURE_THRESHOLD_MICROS);
+
+    // put failure
+    let failure = FetchFailure{app: WxApp::Admin, ingest_ts: 0};
+    let mut payload = [5u8].to_vec();
+    payload.extend_from_slice(&serialize(&failure).unwrap());
+    let msg = Message::from_slice(&payload);
+    wx_store::process_msg(&msg, &store).unwrap();
+
+    // get failures
+    let payload = [6u8].to_vec();
+    let msg = Message::from_slice(&payload);
+    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result: Vec<FetchFailure> = deserialize(&result).unwrap();
+
+    assert!(result.len() == 1);
+    assert!(result[0].ingest_ts > 0);
+}
+
+#[test]
+fn get_fetch_failures_should_return_recent_failures() {
+    destroy_store();
+    let fetch_failure_threshold_micros = 1000 * 1000; // 1s
+    let sleep_duration = time::Duration::from_secs(1);
+    let store = Store::new(TEST_STORE_PATH, EVENT_THRESHOLD_MICROS, fetch_failure_threshold_micros);
+
+    // put "old" failure
+    let failure = FetchFailure{app: WxApp::Admin, ingest_ts: 0};
+    let mut payload = [5u8].to_vec();
+    payload.extend_from_slice(&serialize(&failure).unwrap());
+    let msg = Message::from_slice(&payload);
+    wx_store::process_msg(&msg, &store).unwrap();
+
+    thread::sleep(sleep_duration);
+
+    // put "new" failure
+    let failure = FetchFailure{app: WxApp::Admin, ingest_ts: 0};
+    let mut payload = [5u8].to_vec();
+    payload.extend_from_slice(&serialize(&failure).unwrap());
+    let msg = Message::from_slice(&payload);
+    wx_store::process_msg(&msg, &store).unwrap();
+
+    // get failures
+    let payload = [6u8].to_vec();
+    let msg = Message::from_slice(&payload);
+    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result: Vec<FetchFailure> = deserialize(&result).unwrap();
+
+    assert!(result.len() == 1);
+    assert!(result[0].ingest_ts > 0);
 }

@@ -50,6 +50,7 @@ All functionality is fairly low level, so instead of opting to mock, coverage is
  # TODO
  - Add ability to put/get running tail of upstream metrics (errors, heartbeat, etc.)
  - Add ability to put/get statuses with expiration
+ - Potentially move shared client helper into this lib
  - Add cleanup function
  - Add idiomatic benchmark tests
  - Look into custom sort for u64 bytes instead of converting to string
