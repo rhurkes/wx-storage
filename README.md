@@ -48,12 +48,10 @@ Iterating across 10k keys in RocksDB, serializing, and sending via IPC:
 All functionality is fairly low level, so instead of opting to mock, coverage is provided by integration tests.
 
  # TODO
- - Add ability to put/get running tail of upstream metrics (errors, heartbeat, etc.)
  - Add ability to put/get statuses with expiration
  - Potentially move shared client helper into this lib
  - Add cleanup function
  - Add idiomatic benchmark tests
  - Look into custom sort for u64 bytes instead of converting to string
- - Add enum for command bytes and return byte types
  - Implement [zero copy](http://zeromq.org/blog:zero-copy) when/if [issue #139](https://github.com/erickt/rust-zmq/issues/139) is resolved
  
