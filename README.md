@@ -10,6 +10,11 @@ Stored in the **default** column family.
 # Tech
 Communication with the storage engine is handled using [ZeroMQ](http://zeromq.org/), which provides a performant and ergonomic way of doing IPC/RPC and also a means of concurrency.
 
+# Build
+You'll need to install ZeroMQ, and possibly some other things to build:
+- on Fedora: `sudo dnf install -y zeromq-devel clang`
+- on OSX: `brew install zmq`
+
 # Usage
 - Command to build for production: `cargo build --release && strip target/release/wx_store`
 
@@ -45,7 +50,7 @@ Iterating across 10k keys in RocksDB, serializing, and sending via IPC:
 - Negligable effect: block size, disabling compression, re-using a buffer, initializing the buffer length
 
 # Tests
-All functionality is fairly low level, so instead of opting to mock, coverage is provided by integration tests.
+All functionality is fairly low level, so instead of opting to mock, coverage is provided by integration tests. If you wish to run all tests, you will need to disable concurrent tests via `RUST_TEST_THREADS=1 cargo test`.
 
  # TODO
  - Add ability to put/get statuses with expiration

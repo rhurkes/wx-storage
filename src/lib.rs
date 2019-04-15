@@ -9,6 +9,10 @@ use zmq::Message;
 const EVENTS_CF: &str = "events";
 const FETCH_FAILURES_CF: &str = "fetch_failures";
 
+fn convert_error(e: rocksdb::Error) -> Error {
+    Error::Wx(<WxError>::new(&e.to_string()))
+}
+
 pub fn process_msg(msg: &Message, store: &Store) -> Result<Vec<u8>, Error> {
     if msg.len() == 0 {
         return Err(Error::Wx(<WxError>::new("invalid message length")));
@@ -18,13 +22,13 @@ pub fn process_msg(msg: &Message, store: &Store) -> Result<Vec<u8>, Error> {
     let command = Command::from(msg[0]);
 
     match command {
-        Some(Command::Put) => store.put(payload),
-        Some(Command::Get) => store.get(payload),
-        Some(Command::PutEvent) => store.put_event(payload),
-        Some(Command::GetEvents) => store.get_events(payload, false),
-        Some(Command::GetAllEvents) => store.get_events(payload, true),
-        Some(Command::PutFetchFailure) => store.put_fetch_failure(payload),
-        Some(Command::GetFetchFailures) => store.get_fetch_failures(),
+        Some(Command::Put) => store.put(payload).map_err(convert_error),
+        Some(Command::Get) => store.get(payload).map_err(convert_error),
+        Some(Command::PutEvent) => store.put_event(payload).map_err(convert_error),
+        Some(Command::GetEvents) => store.get_events(payload, false).map_err(convert_error),
+        Some(Command::GetAllEvents) => store.get_events(payload, true).map_err(convert_error),
+        Some(Command::PutFetchFailure) => store.put_fetch_failure(payload).map_err(convert_error),
+        Some(Command::GetFetchFailures) => store.get_fetch_failures().map_err(convert_error),
         _ => Err(Error::Wx(<WxError>::new("unknown command"))),
     }
 }
@@ -34,11 +38,15 @@ pub struct Store {
     events_cf: ColumnFamily,
     fetch_failures_cf: ColumnFamily,
     event_threshold_micros: u64,
-    fetch_failure_threshold_micros: u64
+    fetch_failure_threshold_micros: u64,
 }
 
 impl Store {
-    pub fn new(path: &str, event_threshold_micros: u64, fetch_failure_threshold_micros: u64) -> Store {
+    pub fn new(
+        path: &str,
+        event_threshold_micros: u64,
+        fetch_failure_threshold_micros: u64,
+    ) -> Store {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
@@ -58,7 +66,7 @@ impl Store {
         }
     }
 
-    pub fn put(&self, payload: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn put(&self, payload: &[u8]) -> Result<Vec<u8>, rocksdb::Error> {
         let kv: (&str, &[u8]) = deserialize(payload).unwrap();
         let key = kv.0.as_bytes();
         self.db.put(&key, kv.1)?;
@@ -66,7 +74,7 @@ impl Store {
         Ok(key.to_vec())
     }
 
-    pub fn get(&self, key: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn get(&self, key: &[u8]) -> Result<Vec<u8>, rocksdb::Error> {
         match self.db.get(key)? {
             Some(value) => Ok(value.to_vec()),
             None => Ok(vec![]),
@@ -78,7 +86,7 @@ impl Store {
      * u64 as the key. This is an internal quirk that we don't want to expose, which is why we
      * return u64 bytes and not the actual key used.
      */
-    pub fn put_event(&self, value: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn put_event(&self, value: &[u8]) -> Result<Vec<u8>, rocksdb::Error> {
         let micros = wx::util::get_system_micros();
         let key = micros.to_string();
         let mut event: Event = deserialize(&value).unwrap();
@@ -91,7 +99,7 @@ impl Store {
         Ok(micros_bytes)
     }
 
-    pub fn get_events(&self, key: &[u8], get_all: bool) -> Result<Vec<u8>, Error> {
+    pub fn get_events(&self, key: &[u8], get_all: bool) -> Result<Vec<u8>, rocksdb::Error> {
         let mut buffer = Vec::new();
         let mut count: u64 = 0;
         let mut iter = self.db.raw_iterator_cf(self.events_cf)?;
@@ -127,18 +135,19 @@ impl Store {
         Ok(events_envelope)
     }
 
-    pub fn put_fetch_failure(&self, value: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn put_fetch_failure(&self, value: &[u8]) -> Result<Vec<u8>, rocksdb::Error> {
         let micros = wx::util::get_system_micros();
         let key = micros.to_string();
         let mut failure: FetchFailure = deserialize(&value).unwrap();
         failure.ingest_ts = micros;
         let value = serialize(&failure).unwrap();
-        self.db.put_cf(self.fetch_failures_cf, &key.as_bytes(), &value)?;
+        self.db
+            .put_cf(self.fetch_failures_cf, &key.as_bytes(), &value)?;
 
         Ok(vec![])
     }
 
-    pub fn get_fetch_failures(&self) -> Result<Vec<u8>, Error> {
+    pub fn get_fetch_failures(&self) -> Result<Vec<u8>, rocksdb::Error> {
         let mut buffer = Vec::new();
         let mut count: u64 = 0;
         let mut iter = self.db.raw_iterator_cf(self.fetch_failures_cf)?;

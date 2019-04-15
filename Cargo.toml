@@ -11,5 +11,6 @@ name = "wx_store"
 bincode = "1.0"
 rocksdb = "0.11"
 slog = "2.4"
-wx = { git = "https://github.com/rhurkes/wx_shared" }
+# wx = { git = "https://github.com/rhurkes/wx_shared" }
+wx = { path = "../wx_shared" }
 zmq = "0.9"
