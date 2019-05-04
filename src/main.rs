@@ -4,10 +4,10 @@ extern crate slog;
 use bincode::serialize;
 use wx::store::Status;
 use wx::util::Logger;
-use wx_store::Store;
+use wx_storage::Store;
 use zmq::{Context, Message};
 
-const APP_NAME: &str = "wx_store";
+const APP_NAME: &str = "wx_storage";
 const STORE_PATH: &str = "wx_store";
 const EVENT_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60; // 1 hr
 const FETCH_FAILURE_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 3; // 3 minutes
@@ -29,7 +29,7 @@ fn main() {
 
     loop {
         if sock.recv(&mut msg, 0).is_ok() {
-            match wx_store::process_msg(&msg, &store) {
+            match wx_storage::process_msg(&msg, &store) {
                 Ok(value) => {
                     let mut payload = [Status::OkByte.value()].to_vec();
                     payload.extend_from_slice(&value);

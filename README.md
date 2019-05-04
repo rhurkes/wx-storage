@@ -1,4 +1,4 @@
-# wx_store
+# wx_storage
 Small process to centralize reading/writing events to a [RocksDB](https://github.com/facebook/rocksdb)-based store in a way that is tailored to the wx_api domain. There are two types of data stored:
 
 ## Events
@@ -16,7 +16,7 @@ You'll need to install ZeroMQ, and possibly some other things to build:
 - on OSX: `brew install zmq`
 
 # Usage
-- Command to build for production: `cargo build --release && strip target/release/wx_store`
+- Command to build for production: `cargo build --release && strip target/release/wx_storage`
 
 Command payloads sent via ZeroMQ are an array of bytes, with the first byte as the **command type** and the rest of the bytes being a type-specific payload.
 

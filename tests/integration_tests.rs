@@ -1,10 +1,10 @@
-extern crate wx_store;
+extern crate wx_storage;
 
 use bincode::{deserialize, serialize};
 use rocksdb::{Options, DB};
 use std::{str, thread, time};
 use wx::domain::{Event, EventType, FetchFailure, WxApp};
-use wx_store::Store;
+use wx_storage::{process_msg, Store};
 use zmq::Message;
 
 const EVENT_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60; // 1 hr
@@ -44,7 +44,7 @@ fn zero_message_length_should_error() {
         FETCH_FAILURE_THRESHOLD_MICROS,
     );
     let msg = Message::new();
-    let result = wx_store::process_msg(&msg, &store);
+    let result = process_msg(&msg, &store);
     assert!(result.is_err())
 }
 
@@ -57,7 +57,7 @@ fn unknown_command_should_error() {
     );
     let payload = b"4";
     let msg = Message::from_slice(payload);
-    let result = wx_store::process_msg(&msg, &store);
+    let result = process_msg(&msg, &store);
     assert!(result.is_err())
 }
 
@@ -77,14 +77,14 @@ fn put_and_get_should_work() {
     let mut payload = [0u8].to_vec();
     payload.extend_from_slice(&kv);
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store);
+    let result = process_msg(&msg, &store);
     assert!(result.is_ok());
 
     // get
     let mut payload = [1u8].to_vec();
     payload.extend_from_slice(key.as_bytes());
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store);
+    let result = process_msg(&msg, &store);
     assert!(result.is_ok());
     assert!(result.unwrap() == value);
 }
@@ -101,7 +101,7 @@ fn get_should_return_nothing_if_key_not_found() {
     let mut payload = [1u8].to_vec();
     payload.extend_from_slice(key.as_bytes());
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store);
+    let result = process_msg(&msg, &store);
     let expected: Vec<u8> = vec![];
     assert!(result.unwrap() == expected);
 }
@@ -118,7 +118,7 @@ fn put_event_should_return_a_u64() {
     let mut payload = [2u8].to_vec();
     payload.extend_from_slice(&serialize(&event).unwrap());
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store);
+    let result = process_msg(&msg, &store);
     assert!(result.unwrap().len() == 8)
 }
 
@@ -135,12 +135,12 @@ fn put_event_and_get_events_should_persist_an_event_and_populate_ingest_ts() {
     let mut payload = [2u8].to_vec();
     payload.extend_from_slice(&serialize(&event).unwrap());
     let msg = Message::from_slice(&payload);
-    let key = wx_store::process_msg(&msg, &store).unwrap();
+    let key = process_msg(&msg, &store).unwrap();
     let expected_key: u64 = deserialize(&key).unwrap();
 
     let payload = [3u8].to_vec();
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result = process_msg(&msg, &store).unwrap();
     let result: Vec<Event> = deserialize(&result).unwrap();
     let result = &result[0];
     assert_eq!(result.event_ts, event.event_ts);
@@ -167,16 +167,16 @@ fn get_event_should_return_events_newer_than_threshold() {
     let msg = Message::from_slice(&payload);
 
     // put 1 "old" message and sleep
-    wx_store::process_msg(&msg, &store).unwrap();
+    process_msg(&msg, &store).unwrap();
     thread::sleep(sleep_duration);
 
     // put 1 "new" messages and capture the ingest_ts
-    let value = wx_store::process_msg(&msg, &store).unwrap();
+    let value = process_msg(&msg, &store).unwrap();
     let expected: u64 = deserialize(&value).unwrap();
 
     let payload = [3u8].to_vec();
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result = process_msg(&msg, &store).unwrap();
     let result: Vec<Event> = deserialize(&result).unwrap();
     assert!(result.len() == 1);
     assert!(result[0].ingest_ts == expected);
@@ -197,13 +197,13 @@ fn get_events_should_seek_correctly() {
     let msg = Message::from_slice(&payload);
 
     // put 1 "old" message
-    wx_store::process_msg(&msg, &store).unwrap();
+    process_msg(&msg, &store).unwrap();
 
     // put 1 message and capture the ingest_ts
-    let value: u64 = deserialize(&wx_store::process_msg(&msg, &store).unwrap()).unwrap();
+    let value: u64 = deserialize(&process_msg(&msg, &store).unwrap()).unwrap();
 
     // put 1 "new" message
-    let expected = wx_store::process_msg(&msg, &store).unwrap();
+    let expected = process_msg(&msg, &store).unwrap();
     let expected: u64 = deserialize(&expected).unwrap();
 
     // get events, passing the last seen ts
@@ -212,7 +212,7 @@ fn get_events_should_seek_correctly() {
     payload.extend_from_slice(&ingest_string_bytes);
 
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result = process_msg(&msg, &store).unwrap();
     let result: Vec<Event> = deserialize(&result).unwrap();
     assert!(result.len() == 1);
     assert!(result[0].ingest_ts == expected);
@@ -230,7 +230,7 @@ fn get_events_handles_zero_events() {
     let value: Vec<u8> = vec![];
     payload.extend_from_slice(&value);
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result = process_msg(&msg, &store).unwrap();
     let result: Vec<Event> = deserialize(&result).unwrap();
     assert!(result.len() == 0);
 }
@@ -252,12 +252,12 @@ fn put_fetch_failure_should_persist_failures() {
     let mut payload = [5u8].to_vec();
     payload.extend_from_slice(&serialize(&failure).unwrap());
     let msg = Message::from_slice(&payload);
-    wx_store::process_msg(&msg, &store).unwrap();
+    process_msg(&msg, &store).unwrap();
 
     // get failures
     let payload = [6u8].to_vec();
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result = process_msg(&msg, &store).unwrap();
     let result: Vec<FetchFailure> = deserialize(&result).unwrap();
 
     assert!(result.len() == 1);
@@ -283,7 +283,7 @@ fn get_fetch_failures_should_return_recent_failures() {
     let mut payload = [5u8].to_vec();
     payload.extend_from_slice(&serialize(&failure).unwrap());
     let msg = Message::from_slice(&payload);
-    wx_store::process_msg(&msg, &store).unwrap();
+    process_msg(&msg, &store).unwrap();
 
     thread::sleep(sleep_duration);
 
@@ -295,12 +295,12 @@ fn get_fetch_failures_should_return_recent_failures() {
     let mut payload = [5u8].to_vec();
     payload.extend_from_slice(&serialize(&failure).unwrap());
     let msg = Message::from_slice(&payload);
-    wx_store::process_msg(&msg, &store).unwrap();
+    process_msg(&msg, &store).unwrap();
 
     // get failures
     let payload = [6u8].to_vec();
     let msg = Message::from_slice(&payload);
-    let result = wx_store::process_msg(&msg, &store).unwrap();
+    let result = process_msg(&msg, &store).unwrap();
     let result: Vec<FetchFailure> = deserialize(&result).unwrap();
 
     assert!(result.len() == 1);
