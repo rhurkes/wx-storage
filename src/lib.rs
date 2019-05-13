@@ -50,6 +50,7 @@ impl Store {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
+        opts.enable_statistics();
         opts.set_compression_type(DBCompressionType::Lz4hc);
 
         let cfs = [EVENTS_CF, FETCH_FAILURES_CF];
