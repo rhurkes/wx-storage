@@ -40,6 +40,7 @@ impl Store {
     ) -> Store {
         let mut opts = Options::default();
         opts.create_if_missing(true);
+        opts.enable_statistics();
         opts.set_compression_type(DBCompressionType::Lz4hc);
         let db = DB::open(&opts, path).unwrap();
 
