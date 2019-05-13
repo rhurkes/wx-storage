@@ -10,18 +10,13 @@ use zmq::{Context, Message};
 const APP_NAME: &str = "wx_storage";
 const STORE_PATH: &str = "wx_store";
 const EVENT_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 60; // 1 hr
-const FETCH_FAILURE_THRESHOLD_MICROS: u64 = 1000 * 1000 * 60 * 3; // 3 minutes
 const ZMQ_ADDRESS: &str = "tcp://127.0.0.1:31337";
 
 fn main() {
     let ctx = Context::new();
     let sock = ctx.socket(zmq::REP).unwrap();
     let logger = Logger::new(APP_NAME);
-    let store = Store::new(
-        STORE_PATH,
-        EVENT_THRESHOLD_MICROS,
-        FETCH_FAILURE_THRESHOLD_MICROS,
-    );
+    let store = Store::new(STORE_PATH, EVENT_THRESHOLD_MICROS);
     let mut msg = Message::new();
 
     info!(logger, "initializing"; "zmq_address" => ZMQ_ADDRESS, "store_path" => STORE_PATH);

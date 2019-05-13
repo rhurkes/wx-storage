@@ -1,13 +1,10 @@
 use bincode::{deserialize, serialize};
-use rocksdb::{ColumnFamily, DBCompressionType, Options, DB};
+use rocksdb::{DBCompressionType, Options, DB};
 use std::mem;
-use wx::domain::{Event, FetchFailure};
+use wx::domain::Event;
 use wx::error::{Error, WxError};
 use wx::store::Command;
 use zmq::Message;
-
-const EVENTS_CF: &str = "events";
-const FETCH_FAILURES_CF: &str = "fetch_failures";
 
 fn convert_error(e: rocksdb::Error) -> Error {
     Error::Wx(<WxError>::new(&e.to_string()))
@@ -27,42 +24,28 @@ pub fn process_msg(msg: &Message, store: &Store) -> Result<Vec<u8>, Error> {
         Some(Command::PutEvent) => store.put_event(payload).map_err(convert_error),
         Some(Command::GetEvents) => store.get_events(payload, false).map_err(convert_error),
         Some(Command::GetAllEvents) => store.get_events(payload, true).map_err(convert_error),
-        Some(Command::PutFetchFailure) => store.put_fetch_failure(payload).map_err(convert_error),
-        Some(Command::GetFetchFailures) => store.get_fetch_failures().map_err(convert_error),
         _ => Err(Error::Wx(<WxError>::new("unknown command"))),
     }
 }
 
 pub struct Store {
     db: DB,
-    events_cf: ColumnFamily,
-    fetch_failures_cf: ColumnFamily,
     event_threshold_micros: u64,
-    fetch_failure_threshold_micros: u64,
 }
 
 impl Store {
     pub fn new(
         path: &str,
         event_threshold_micros: u64,
-        fetch_failure_threshold_micros: u64,
     ) -> Store {
         let mut opts = Options::default();
         opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
         opts.set_compression_type(DBCompressionType::Lz4hc);
-
-        let cfs = [EVENTS_CF, FETCH_FAILURES_CF];
-        let db = DB::open_cf(&opts, path, &cfs).unwrap();
-        let events_cf = db.cf_handle(EVENTS_CF).unwrap();
-        let fetch_failures_cf = db.cf_handle(FETCH_FAILURES_CF).unwrap();
+        let db = DB::open(&opts, path).unwrap();
 
         Store {
             db,
-            events_cf,
-            fetch_failures_cf,
             event_threshold_micros,
-            fetch_failure_threshold_micros,
         }
     }
 
@@ -92,7 +75,7 @@ impl Store {
         let mut event: Event = deserialize(&value).unwrap();
         event.ingest_ts = micros;
         let value = serialize(&event).unwrap();
-        self.db.put_cf(self.events_cf, &key.as_bytes(), &value)?;
+        self.db.put(&key.as_bytes(), &value)?;
 
         let micros_bytes = serialize(&micros).unwrap();
 
@@ -102,7 +85,7 @@ impl Store {
     pub fn get_events(&self, key: &[u8], get_all: bool) -> Result<Vec<u8>, rocksdb::Error> {
         let mut buffer = Vec::new();
         let mut count: u64 = 0;
-        let mut iter = self.db.raw_iterator_cf(self.events_cf)?;
+        let mut iter = self.db.raw_iterator();
 
         if get_all {
             iter.seek_to_first()
@@ -133,40 +116,5 @@ impl Store {
         events_envelope.extend_from_slice(&buffer);
 
         Ok(events_envelope)
-    }
-
-    pub fn put_fetch_failure(&self, value: &[u8]) -> Result<Vec<u8>, rocksdb::Error> {
-        let micros = wx::util::get_system_micros();
-        let key = micros.to_string();
-        let mut failure: FetchFailure = deserialize(&value).unwrap();
-        failure.ingest_ts = micros;
-        let value = serialize(&failure).unwrap();
-        self.db
-            .put_cf(self.fetch_failures_cf, &key.as_bytes(), &value)?;
-
-        Ok(vec![])
-    }
-
-    pub fn get_fetch_failures(&self) -> Result<Vec<u8>, rocksdb::Error> {
-        let mut buffer = Vec::new();
-        let mut count: u64 = 0;
-        let mut iter = self.db.raw_iterator_cf(self.fetch_failures_cf)?;
-        let micros = wx::util::get_system_micros() - self.fetch_failure_threshold_micros;
-        let micros = micros.to_string();
-        iter.seek(&micros.as_bytes());
-
-        while iter.valid() {
-            let value = unsafe { iter.value_inner().unwrap() };
-            buffer.extend_from_slice(&value);
-            count += 1;
-            iter.next();
-        }
-
-        let mut envelope = Vec::new();
-        let count: [u8; 8] = unsafe { mem::transmute(count) };
-        envelope.extend_from_slice(&count);
-        envelope.extend_from_slice(&buffer);
-
-        Ok(envelope)
     }
 }

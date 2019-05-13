@@ -9,7 +9,7 @@ name = "wx_storage"
 
 [dependencies]
 bincode = "1.0"
-rocksdb = "0.11"
+rocksdb = "0.12"
 slog = "2.4"
 wx = { git = "https://github.com/rhurkes/wx-shared" }
 zmq = "0.9"

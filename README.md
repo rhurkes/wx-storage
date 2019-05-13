@@ -2,10 +2,7 @@
 Small process to centralize reading/writing events to a [RocksDB](https://github.com/facebook/rocksdb)-based store in a way that is tailored to the wx_api domain. There are two types of data stored:
 
 ## Events
-Stored in the `events` column family. This is the majority of data stored with potentially 1000+ events/hour written. Read/write ratio is expected to be in the vicinity of **60*n*:1**, where *n* is the number of users, so fast event iterations are critical. A large component of what makes this implementation fast is some custom binary serialization that is detailed in the **Performance** section below.
-
-## Other
-Stored in the **default** column family.
+Potentially 1000+ events/hour written. Read/write ratio is expected to be in the vicinity of **60*n*:1**, where *n* is the number of users, so fast event iterations are critical. A large component of what makes this implementation fast is some custom binary serialization that is detailed in the **Performance** section below.
 
 # Tech
 Communication with the storage engine is handled using [ZeroMQ](http://zeromq.org/), which provides a performant and ergonomic way of doing IPC/RPC and also a means of concurrency.
@@ -53,10 +50,9 @@ Iterating across 10k keys in RocksDB, serializing, and sending via IPC:
 All functionality is fairly low level, so instead of opting to mock, coverage is provided by integration tests. If you wish to run all tests, you will need to disable concurrent tests via `RUST_TEST_THREADS=1 cargo test`.
 
  # TODO
- - Add ability to put/get statuses with expiration
  - Potentially move shared client helper into this lib
  - Add cleanup function
  - Add idiomatic benchmark tests
  - Look into custom sort for u64 bytes instead of converting to string
- - Implement [zero copy](http://zeromq.org/blog:zero-copy) when/if [issue #139](https://github.com/erickt/rust-zmq/issues/139) is resolved
+ - Implement [zero copy](http://zeromq.org/blog:zero-copy) when/if [issue #139](https://github.com/erickt/rust-zmq/issues/139) is resolved, or I switch to nanomsg
  
